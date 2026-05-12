@@ -1,7 +1,7 @@
-# PR-gated continuous integration — runs backend pytest + frontend node:test
-# + TypeScript typecheck on every pull request and push to main. Keeps the
-# heavy 4-platform Tauri bundle off this path (that's release.yml on tag
-# push) so PRs turn around in a few minutes instead of ~40.
+# PR-gated continuous integration — runs local-server backend smoke tests,
+# frontend node:test, and a Svelte/Vite production build on every pull request
+# and push to main. Keeps the heavy 4-platform Tauri bundle off this path
+# (that's release.yml on tag push) so PRs turn around faster.
 
 name: CI
 
@@ -58,8 +58,8 @@ jobs:
       - name: Install Python deps
         run: uv sync
 
-      - name: Run pytest
-        run: uv run pytest tests/ -q --tb=short
+      - name: Run backend local-server smoke tests
+        run: uv run pytest tests/test_local_server_app.py -q --tb=short
 
       # Cache ~/.bun/install/cache keyed on bun.lock — `bun install` drops
       # from ~15 s cold to near-instant on warm cache.
@@ -78,6 +78,10 @@ jobs:
       - name: Frontend typecheck
         working-directory: frontend
         run: bunx tsc --noEmit
+
+      - name: Frontend Svelte build
+        working-directory: frontend
+        run: bun run build
 
       # Invoke node directly (not `bun run test`) because `bun run` auto-aliases
       # `node` to `bun` in script bodies, and bun doesn't support

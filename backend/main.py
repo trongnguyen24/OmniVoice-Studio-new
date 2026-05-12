@@ -321,8 +321,11 @@ def health():
     return {"status": "ok", "device": device}
 
 
-app.include_router(system.router)
-app.include_router(extension_tts.router)
+for router in (
+    system.router,
+    extension_tts.router,
+):
+    app.include_router(router)
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_path):

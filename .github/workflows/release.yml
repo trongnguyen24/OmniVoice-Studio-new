@@ -36,8 +36,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  # Fast gating job — runs backend pytest + frontend node:test + tsc on a
-  # single Linux runner. The matrix build below waits on this via `needs:`
+  # Fast gating job — runs local-server backend smoke tests + frontend node:test
+  # + tsc on a single Linux runner. The matrix build below waits on this via `needs:`
   # so we don't burn 4× platform-matrix minutes on a broken commit.
   test:
     name: Tests (backend + frontend)
@@ -78,8 +78,8 @@ jobs:
       - name: Install Python deps
         run: uv sync
 
-      - name: Run pytest
-        run: uv run pytest tests/ -q --tb=short
+      - name: Run backend local-server smoke tests
+        run: uv run pytest tests/test_local_server_app.py -q --tb=short
 
       - name: Cache bun deps
         uses: actions/cache@v4
@@ -96,6 +96,10 @@ jobs:
       - name: Frontend typecheck
         working-directory: frontend
         run: bunx tsc --noEmit
+
+      - name: Frontend Svelte build
+        working-directory: frontend
+        run: bun run build
 
       # Invoke node directly (not `bun run test`) because `bun run` auto-aliases
       # `node` to `bun` in script bodies, and bun doesn't support

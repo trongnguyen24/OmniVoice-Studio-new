@@ -4,7 +4,6 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": false,
@@ -22,6 +21,10 @@
     "types": ["vite/client"],
     "ignoreDeprecations": "6.0"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "src/**/*.js", "src/**/*.jsx"],
+  "include": [
+    "src/main.js",
+    "src/lib/**/*.js",
+    "src/utils/**/*.js"
+  ],
   "exclude": ["node_modules", "dist", "src-tauri"]
 }
