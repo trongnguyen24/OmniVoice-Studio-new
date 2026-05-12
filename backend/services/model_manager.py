@@ -184,10 +184,17 @@ def _load_model_sync():
         )
 
         try:
-            if device == "cuda":
-                _set_loading("compiling", "Compiling model (torch.compile)…")
-                _model.llm = torch.compile(_model.llm, mode="reduce-overhead")
-                logger.info("torch.compile applied.")
+            compile_disabled = os.environ.get("TORCH_COMPILE_DISABLE") == "1"
+            compile_opt_in = os.environ.get("OMNIVOICE_ENABLE_TORCH_COMPILE") == "1"
+            if device == "cuda" and not compile_disabled:
+                if os.name == "nt" and not compile_opt_in:
+                    logger.info(
+                        "torch.compile skipped on Windows; set OMNIVOICE_ENABLE_TORCH_COMPILE=1 to opt in."
+                    )
+                else:
+                    _set_loading("compiling", "Compiling model (torch.compile)…")
+                    _model.llm = torch.compile(_model.llm, mode="reduce-overhead")
+                    logger.info("torch.compile applied.")
         except Exception as e:
             logger.info("torch.compile skipped: %s", e)
 

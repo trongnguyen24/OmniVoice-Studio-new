@@ -56,6 +56,13 @@ def _run_inference(
             torch.mps.empty_cache()
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
+        err = str(e)
+        if any(token in err.lower() for token in ("triton", "torch.compile", "inductor", "dynamo")):
+            raise RuntimeError(
+                "TTS engine stopped because PyTorch tried to use torch.compile/Triton. "
+                "On Windows this is usually unsupported; restart the app so compile is disabled, "
+                f"then regenerate. Underlying error: {e}"
+            )
         raise RuntimeError(
             f"TTS engine stopped mid-generation. This usually means it ran out of memory. "
             f"Try the Flush button to reload the model, then regenerate. Underlying error: {e}"
