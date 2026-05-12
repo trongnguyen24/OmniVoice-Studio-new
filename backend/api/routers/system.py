@@ -165,13 +165,13 @@ def _tauri_log_candidates():
     """Likely paths for Tauri-side logs, most useful first.
 
     `tauri-plugin-log` writes to `~/Library/Logs/<bundle_id>/<file_name>.log`
-    by default on macOS. Our bundle id is `com.debpalash.omnivoice-studio`
+    by default on macOS. Our bundle id is `com.local.omnivoice-server`
     (see frontend/src-tauri/tauri.conf.json). lib.rs also redirects the
     spawned backend's stdout/stderr to `~/Library/Logs/OmniVoice/backend.log`
     which is where `print()` calls and uvicorn startup banners land.
     """
     home = os.path.expanduser("~")
-    bid = "com.debpalash.omnivoice-studio"
+    bid = "com.local.omnivoice-server"
     if sys.platform == "darwin":
         return [
             os.path.join(home, "Library/Logs", bid, "tauri.log"),

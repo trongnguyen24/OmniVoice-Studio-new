@@ -258,6 +258,9 @@ def get_model_status():
         "loaded": is_loaded,
         "loading": is_loading,
         "status": status,
+        "active_engine": os.environ.get("OMNIVOICE_TTS_ENGINE", "omnivoice"),
+        "loaded_engines": ["omnivoice"] if is_loaded else [],
+        "available_engines": ["omnivoice", "kokoro", "gwen"],
     }
     # Attach sub-stage detail when loading or after an error
     sub = _loading_detail.get("sub_stage")

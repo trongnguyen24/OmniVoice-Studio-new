@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "OmniVoice Studio",
+  "productName": "Local OmniVoice Server",
   "version": "0.2.7",
-  "identifier": "com.debpalash.omnivoice-studio",
+  "identifier": "com.local.omnivoice-server",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:3901",
@@ -14,30 +14,16 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "OmniVoice Studio",
-        "width": 1920,
-        "height": 1080,
-        "minWidth": 900,
-        "minHeight": 600,
+        "label": "main",
+        "title": "Local OmniVoice Server",
+        "width": 1100,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 520,
         "resizable": true,
         "fullscreen": false,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
-      },
-      {
-        "label": "widget",
-        "title": "Capture",
-        "url": "/?window=widget",
-        "width": 300,
-        "height": 64,
-        "resizable": false,
-        "fullscreen": false,
-        "transparent": true,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true,
-        "center": true
       }
     ],
     "security": {

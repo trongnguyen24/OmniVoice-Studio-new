@@ -1,16 +1,12 @@
-//! Tauri IPC commands: sysinfo, logs, HF cache, paste, tray, quit, dictation shortcut.
+//! Tauri IPC commands: sysinfo, logs, HF cache, and quit.
 
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use serde::Serialize;
-use tauri::image::Image;
 
-use crate::{AppFlags, TrayHandle, DictationShortcutState};
-use crate::{TRAY_ICON_DEFAULT, TRAY_ICON_RECORDING};
-use crate::config::{load_config, save_config};
+use crate::AppFlags;
 
 // ── System metrics ────────────────────────────────────────────────────────
 
@@ -138,7 +134,7 @@ fn dirs_data_dir() -> PathBuf {
 }
 
 fn tauri_log_path() -> PathBuf {
-    let bid = "com.debpalash.omnivoice-studio";
+    let bid = "com.local.omnivoice-server";
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
 
     if cfg!(target_os = "macos") {
@@ -253,261 +249,10 @@ fn hf_hub_cache_dir() -> PathBuf {
         .join("hub")
 }
 
-// ── Simulate paste ────────────────────────────────────────────────────────
-
-use enigo::{Direction, Enigo, Key, Keyboard, Settings as EnigoSettings};
-
-#[tauri::command]
-pub fn simulate_paste() -> Result<(), String> {
-    std::thread::sleep(Duration::from_millis(80));
-
-    let mut enigo = Enigo::new(&EnigoSettings::default())
-        .map_err(|e| format!("Failed to init keyboard sim: {e}"))?;
-
-    #[cfg(target_os = "macos")]
-    {
-        enigo.key(Key::Meta, Direction::Press)
-            .map_err(|e| format!("key press failed: {e}"))?;
-        enigo.key(Key::Unicode('v'), Direction::Click)
-            .map_err(|e| format!("key click failed: {e}"))?;
-        enigo.key(Key::Meta, Direction::Release)
-            .map_err(|e| format!("key release failed: {e}"))?;
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        enigo.key(Key::Control, Direction::Press)
-            .map_err(|e| format!("key press failed: {e}"))?;
-        enigo.key(Key::Unicode('v'), Direction::Click)
-            .map_err(|e| format!("key click failed: {e}"))?;
-        enigo.key(Key::Control, Direction::Release)
-            .map_err(|e| format!("key release failed: {e}"))?;
-    }
-
-    Ok(())
-}
-
-// ── Tray icon swap ────────────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn set_tray_recording(
-    recording: bool,
-    tray_handle: tauri::State<'_, TrayHandle>,
-) -> Result<(), String> {
-    let bytes = if recording { TRAY_ICON_RECORDING } else { TRAY_ICON_DEFAULT };
-    let img = Image::from_bytes(bytes).map_err(|e| format!("decode tray icon: {e}"))?;
-    let lock = tray_handle.tray.lock().map_err(|_| "tray lock poisoned")?;
-    if let Some(ref tray) = *lock {
-        tray.set_icon(Some(img)).map_err(|e| format!("set_icon: {e}"))?;
-    }
-    Ok(())
-}
-
 // ── Quit ──────────────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn quit_app(app: tauri::AppHandle, flags: tauri::State<'_, AppFlags>) {
     flags.quitting.store(true, Ordering::SeqCst);
     app.exit(0);
-}
-
-// ── Dictation hotkey ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub fn get_dictation_shortcut(app: tauri::AppHandle) -> String {
-    load_config(&app).dictation_shortcut
-}
-
-#[tauri::command]
-pub fn set_dictation_shortcut(
-    app: tauri::AppHandle,
-    accelerator: String,
-    state: tauri::State<'_, DictationShortcutState>,
-) -> Result<String, String> {
-    use std::str::FromStr;
-    use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
-
-    let parsed = Shortcut::from_str(&accelerator)
-        .map_err(|e| format!("Invalid shortcut '{accelerator}': {e}"))?;
-
-    let gs = app.global_shortcut();
-
-    let mut slot = state.current.lock().map_err(|_| "shortcut lock poisoned")?;
-    let prev = slot.take();
-    if let Some(ref p) = prev {
-        let _ = gs.unregister(p.clone());
-    }
-    if let Err(e) = gs.register(parsed.clone()) {
-        if let Some(p) = prev {
-            if gs.register(p.clone()).is_ok() {
-                *slot = Some(p);
-            }
-        }
-        return Err(format!("Failed to register '{accelerator}': {e}"));
-    }
-    *slot = Some(parsed);
-    drop(slot);
-
-    let mut cfg = load_config(&app);
-    cfg.dictation_shortcut = accelerator.clone();
-    save_config(&app, &cfg);
-    log::info!("Dictation shortcut updated to {accelerator}");
-    Ok(accelerator)
-}
-
-// ── Pill autostart ────────────────────────────────────────────────────────
-
-/// Returns the path used for autostart registration on each platform.
-fn pill_autostart_path() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        dirs_next::home_dir()
-            .unwrap_or_default()
-            .join("Library/LaunchAgents/com.debpalash.omnivoice-pill.plist")
-    }
-    #[cfg(target_os = "linux")]
-    {
-        dirs_next::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
-            .join("autostart/omnivoice-pill.desktop")
-    }
-    #[cfg(target_os = "windows")]
-    {
-        // We use the registry, but return a sentinel path for the check.
-        PathBuf::from("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\OmniVoicePill")
-    }
-}
-
-#[tauri::command]
-pub fn enable_pill_autostart() -> Result<String, String> {
-    let exe = std::env::current_exe().map_err(|e| format!("Cannot find exe: {e}"))?;
-    let exe_str = exe.to_string_lossy().to_string();
-
-    // Escape for plist XML: &, <, >, ", '
-    fn xml_escape(s: &str) -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let plist_path = pill_autostart_path();
-        if let Some(parent) = plist_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let safe_exe = xml_escape(&exe_str);
-        let plist = format!(
-r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.debpalash.omnivoice-pill</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{safe_exe}</string>
-        <string>--pill</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>
-"#);
-        fs::write(&plist_path, plist).map_err(|e| format!("Write plist: {e}"))?;
-        log::info!("Pill autostart enabled: {}", plist_path.display());
-        return Ok(plist_path.to_string_lossy().to_string());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        let value = format!("\"{}\" --pill", exe_str);
-        let status = Command::new("reg")
-            .args(["add", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                   "/v", "OmniVoicePill", "/t", "REG_SZ", "/d", &value, "/f"])
-            .status()
-            .map_err(|e| format!("reg add: {e}"))?;
-        if !status.success() {
-            return Err("Failed to add registry key".into());
-        }
-        log::info!("Pill autostart enabled via registry");
-        return Ok("registry".into());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let desktop_path = pill_autostart_path();
-        if let Some(parent) = desktop_path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let desktop = format!(
-            "[Desktop Entry]\nType=Application\nName=OmniVoice Dictation\nExec=\"{}\" --pill\nHidden=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n",
-            exe_str.replace('"', "\\\"")
-        );
-        fs::write(&desktop_path, desktop).map_err(|e| format!("Write desktop: {e}"))?;
-        log::info!("Pill autostart enabled: {}", desktop_path.display());
-        return Ok(desktop_path.to_string_lossy().to_string());
-    }
-}
-
-#[tauri::command]
-pub fn disable_pill_autostart() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        let path = pill_autostart_path();
-        if path.exists() {
-            fs::remove_file(&path).map_err(|e| format!("Remove plist: {e}"))?;
-        }
-        log::info!("Pill autostart disabled");
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        let _ = Command::new("reg")
-            .args(["delete", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                   "/v", "OmniVoicePill", "/f"])
-            .status();
-        log::info!("Pill autostart disabled via registry");
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let path = pill_autostart_path();
-        if path.exists() {
-            fs::remove_file(&path).map_err(|e| format!("Remove desktop: {e}"))?;
-        }
-        log::info!("Pill autostart disabled");
-        return Ok(());
-    }
-}
-
-#[tauri::command]
-pub fn is_pill_autostart_enabled() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        return pill_autostart_path().exists();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        let out = Command::new("reg")
-            .args(["query", "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                   "/v", "OmniVoicePill"])
-            .output();
-        return out.map(|o| o.status.success()).unwrap_or(false);
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        return pill_autostart_path().exists();
-    }
 }

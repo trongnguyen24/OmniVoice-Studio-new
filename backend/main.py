@@ -188,33 +188,11 @@ _crash_log_lock = threading.Lock()
 
 from core.db import init_db
 from core.config import OUTPUTS_DIR, VOICES_DIR, CRASH_LOG_PATH
-from core.tasks import task_manager
-from core import job_store
-from services.model_manager import idle_worker, preload_model
+from services.model_manager import idle_worker
 
 from api.routers import (
     system,
-    profiles,
-    exports,
-    generation,
-    dub_core,
-    dub_generate,
-    dub_export,
-    dub_translate,
-    projects,
-    glossary,
-    engines,
-    tools,
-    setup,
-    gallery,
-    batch,
-    watermark,
-    events,
-    capture,
-    capture_ws,
-    openai_compat,
-    tts_stream,
-    marketplace,
+    extension_tts,
 )
 from utils import hf_progress
 
@@ -227,86 +205,35 @@ hf_progress.install()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    from api.routers.gallery import _init_gallery_db
-
-    _init_gallery_db()
-    # Seed a demo voice profile on first run (empty DB only).
-    from core.onboarding import seed_sample_project
-    seed_sample_project()
-    # Any job still in pending/running at startup is orphaned — a previous
-    # process didn't finish it. Flip to failed with a clear message so the
-    # UI doesn't show a fake spinner.
-    try:
-        swept = job_store.sweep_orphans_on_startup()
-        if swept:
-            logger.info("Startup: marked %d orphaned job(s) as failed.", swept)
-    except Exception:
-        logger.exception("Startup job-sweep failed (non-fatal).")
     idle_task = asyncio.create_task(idle_worker())
-    worker_task = asyncio.create_task(task_manager.worker())
-    # Warm the TTS model in the background so first /generate is instant.
-    preload_task = asyncio.create_task(preload_model())
-    # Warm the capture ASR engine (MLX Whisper Turbo on Apple Silicon) so
-    # first dictation is instant. Without this, first capture takes ~25s
-    # just to load the model.
-    async def _preload_capture_asr():
+    try:
+        yield
+    finally:
+        # ── Graceful shutdown (SIGTERM from Tauri, Ctrl+C, etc.) ────────────
+        logger.info("Shutdown: cleaning up…")
+        idle_task.cancel()
         try:
-            from services.model_manager import _gpu_pool, _loading_detail
-            loop = asyncio.get_event_loop()
-            def _warm():
-                from services.asr_backend import get_capture_asr_backend
-                _loading_detail["sub_stage"] = "loading_asr"
-                _loading_detail["detail"] = "Warming up ASR engine…"
-                backend = get_capture_asr_backend()
-                logger.info("Capture ASR backend selected: %s", backend.id)
-                # Actually load model weights into memory — without this the
-                # first dictation still takes ~25s for weight loading.
-                if hasattr(backend, 'warmup'):
-                    _loading_detail["detail"] = f"Loading {backend.display_name}…"
-                    backend.warmup()
-                _loading_detail["sub_stage"] = "ready"
-                _loading_detail["detail"] = "ASR engine ready"
-            await loop.run_in_executor(_gpu_pool, _warm)
-        except Exception as e:
-            logger.warning("Capture ASR preload skipped: %s", e)
-    capture_preload_task = asyncio.create_task(_preload_capture_asr())
-    yield
-    # ── Graceful shutdown (SIGTERM from Tauri, Ctrl+C, etc.) ────────────
-    logger.info("Shutdown: cleaning up…")
-    idle_task.cancel()
-    worker_task.cancel()
-    # Wait for tasks to finish their current iteration
-    for t in (idle_task, worker_task):
-        try:
-            await asyncio.wait_for(t, timeout=3.0)
+            await asyncio.wait_for(idle_task, timeout=3.0)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
-    # Unload the model and free GPU memory
-    try:
-        import services.model_manager as mm
-        if mm.model is not None:
-            mm.model = None
-            logger.info("Shutdown: model unloaded.")
-        mm.free_vram()
-    except Exception:
-        pass
-    # Run GC to release any remaining references
-    try:
-        import gc
-        gc.collect()
-    except Exception:
-        pass
-    # Close shared httpx connection pool
-    try:
-        from api.http_client import close_http_client
-        await close_http_client()
-    except Exception:
-        pass
-    logger.info("Shutdown: done.")
+        try:
+            import services.model_manager as mm
+            if mm.model is not None:
+                mm.model = None
+                logger.info("Shutdown: model unloaded.")
+            mm.free_vram()
+        except Exception:
+            pass
+        try:
+            import gc
+            gc.collect()
+        except Exception:
+            pass
+        logger.info("Shutdown: done.")
 
 
 app = FastAPI(
-    title="OmniVoice Studio API",
+    title="Local OmniVoice Server API",
     version="0.4.0",
     lifespan=lifespan,
     docs_url=None,       # Disabled — replaced by Scalar at /docs
@@ -349,7 +276,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     # error. Attach the headers manually so the real `detail` bubbles up.
     origin = request.headers.get("origin", "")
     headers: dict[str, str] = {}
-    if origin and (origin in _allowed or "*" in _allowed):
+    if origin and _is_allowed_origin(origin):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
         headers["Vary"] = "Origin"
@@ -361,13 +288,18 @@ _allowed = os.environ.get(
     "http://localhost:3901,http://127.0.0.1:3901,tauri://localhost,http://tauri.localhost",
 ).split(",")
 
+
+def _is_allowed_origin(origin: str) -> bool:
+    return origin in _allowed or origin.startswith("chrome-extension://") or origin.startswith("moz-extension://")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _allowed if o.strip()],
+    allow_origin_regex=r"^(chrome-extension|moz-extension)://.*$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],
+    expose_headers=["Content-Disposition", "X-TTS-Engine", "X-Gen-Time", "X-Audio-Duration", "X-Audio-Id", "X-Audio-Path"],
 )
 
 app.mount("/audio", StaticFiles(directory=OUTPUTS_DIR), name="audio")
@@ -390,27 +322,7 @@ def health():
 
 
 app.include_router(system.router)
-app.include_router(profiles.router)
-app.include_router(exports.router)
-app.include_router(generation.router)
-app.include_router(dub_core.router)
-app.include_router(dub_generate.router)
-app.include_router(dub_export.router)
-app.include_router(dub_translate.router)
-app.include_router(projects.router)
-app.include_router(glossary.router)
-app.include_router(engines.router)
-app.include_router(tools.router)
-app.include_router(setup.router)
-app.include_router(gallery.router)
-app.include_router(batch.router)
-app.include_router(watermark.router)
-app.include_router(events.router)
-app.include_router(capture.router)
-app.include_router(capture_ws.router)
-app.include_router(openai_compat.router)
-app.include_router(tts_stream.router)
-app.include_router(marketplace.router)
+app.include_router(extension_tts.router)
 
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_path):

@@ -1,7 +1,7 @@
 [package]
-name = "omnivoice-studio"
+name = "local-omnivoice-server"
 version = "0.2.7"
-description = "OmniVoice Studio – AI voice cloning & dubbing desktop app"
+description = "Local OmniVoice TTS server for browser extensions"
 authors = ["Debpalash"]
 license = "AGPL-3.0"
 repository = ""
