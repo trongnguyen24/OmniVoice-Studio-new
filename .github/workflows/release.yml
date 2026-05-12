@@ -118,7 +118,8 @@ jobs:
             arch: aarch64-apple-darwin
             label: "macOS Apple Silicon"
             rust_target: aarch64-apple-darwin
-            bundles: "app,dmg,updater"
+            release_bundles: "app,dmg,updater"
+            manual_bundles: "app,dmg"
 
           # macOS Intel dropped: Apple shipped the last Intel Mac in 2023 and
           # Rosetta 2 runs the ARM build natively. macos-13 runner backlog
@@ -129,7 +130,8 @@ jobs:
             arch: x86_64-pc-windows-msvc
             label: "Windows x64"
             rust_target: x86_64-pc-windows-msvc
-            bundles: "msi,updater"
+            release_bundles: "msi,updater"
+            manual_bundles: "msi"
 
           # Linux: ship .deb + .AppImage. AppImage is universal (no distro
           # package-manager dep), runs on any glibc-2.31+ host. Now viable
@@ -140,7 +142,8 @@ jobs:
             arch: x86_64-unknown-linux-gnu
             label: "Linux x64"
             rust_target: x86_64-unknown-linux-gnu
-            bundles: "deb,appimage,updater"
+            release_bundles: "deb,appimage,updater"
+            manual_bundles: "deb,appimage"
 
     runs-on: ${{ matrix.os }}
     name: ${{ matrix.label }}
@@ -336,6 +339,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build + release (Tauri)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -347,7 +351,7 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: 1
         with:
           projectPath: frontend
-          args: --target ${{ matrix.rust_target }} --bundles ${{ matrix.bundles }}
+          args: --target ${{ matrix.rust_target }} --bundles ${{ matrix.release_bundles }}
           tagName: ${{ github.ref_name }}
           releaseName: "OmniVoice Studio ${{ github.ref_name }}"
           releaseBody: ${{ steps.changelog.outputs.body }}
@@ -355,3 +359,25 @@ jobs:
           prerelease: false
           updaterJsonPreferNsis: false
           includeUpdaterJson: true
+
+      - name: Build desktop artifacts (Tauri)
+        if: github.event_name == 'workflow_dispatch'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        with:
+          projectPath: frontend
+          args: --target ${{ matrix.rust_target }} --bundles ${{ matrix.manual_bundles }}
+
+      - name: Upload desktop artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.rust_target }}
+          path: |
+            frontend/src-tauri/target/**/release/bundle/**/*.app
+            frontend/src-tauri/target/**/release/bundle/**/*.dmg
+            frontend/src-tauri/target/**/release/bundle/**/*.msi
+            frontend/src-tauri/target/**/release/bundle/**/*.deb
+            frontend/src-tauri/target/**/release/bundle/**/*.AppImage
+          if-no-files-found: error
