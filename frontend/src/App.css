@@ -56,6 +56,7 @@ label { display: grid; gap: 8px; color: #cdd8e2; font-weight: 700; }
 .audio-result { display: grid; gap: 8px; }
 audio { width: 100%; }
 .endpoint-panel code { display: block; margin: 14px 0; padding: 12px; border-radius: 14px; background: rgba(125,211,252,.1); color: #bae6fd; overflow: auto; }
+.clone-divider { height: 1px; margin: 10px 0; background: rgba(255,255,255,.12); }
 
 @media (max-width: 900px) {
   main { padding: 16px; }

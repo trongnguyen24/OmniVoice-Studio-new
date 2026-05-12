@@ -1,8 +1,10 @@
 import os
 import time
 import uuid
+import contextlib
+import tempfile
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -112,3 +114,77 @@ async def generate(payload: ExtensionTTSRequest):
             "Content-Length": str(len(wav_bytes)),
         },
     )
+
+
+@router.post("/generate/clone")
+async def generate_clone(
+    text: str = Form(...),
+    ref_audio: UploadFile = File(...),
+    engine: str | None = Form(None),
+    language: str | None = Form("Auto"),
+    ref_text: str | None = Form(None),
+    instruct: str | None = Form(None),
+    speed: float = Form(1.0),
+    seed: int | None = Form(None),
+):
+    text = text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Text is required.")
+    if speed < 0.5 or speed > 2.0:
+        raise HTTPException(status_code=400, detail="Speed must be between 0.5 and 2.0.")
+
+    tts_engine = get_engine(engine)
+    available, reason = tts_engine.is_available()
+    if not available:
+        raise HTTPException(status_code=400, detail=reason)
+
+    suffix = os.path.splitext(ref_audio.filename or "reference.wav")[1] or ".wav"
+    ref_audio_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+            handle.write(await ref_audio.read())
+            ref_audio_path = handle.name
+
+        audio_id = str(uuid.uuid4())[:8]
+        started = time.time()
+        wav_bytes, _sample_rate, meta = await tts_engine.generate(
+            TTSRequest(
+                text=text,
+                language=language,
+                voice_id="default",
+                ref_audio_path=ref_audio_path,
+                ref_text=ref_text,
+                instruct=instruct,
+                speed=speed,
+                seed=seed,
+            )
+        )
+
+        filename = f"{audio_id}.wav"
+        with open(os.path.join(OUTPUTS_DIR, filename), "wb") as handle:
+            handle.write(wav_bytes)
+
+        gen_time = meta.get("generation_time", round(time.time() - started, 2))
+        duration = meta.get("duration", "")
+
+        async def stream_wav():
+            chunk_size = 16384
+            for index in range(0, len(wav_bytes), chunk_size):
+                yield wav_bytes[index:index + chunk_size]
+
+        return StreamingResponse(
+            stream_wav(),
+            media_type="audio/wav",
+            headers={
+                "X-TTS-Engine": tts_engine.id,
+                "X-Gen-Time": str(gen_time),
+                "X-Audio-Duration": str(duration),
+                "X-Audio-Id": audio_id,
+                "X-Audio-Path": filename,
+                "Content-Length": str(len(wav_bytes)),
+            },
+        )
+    finally:
+        if ref_audio_path:
+            with contextlib.suppress(OSError):
+                os.remove(ref_audio_path)

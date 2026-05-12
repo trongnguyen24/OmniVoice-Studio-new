@@ -12,6 +12,7 @@ class TTSRequest:
     text: str
     language: Optional[str] = None
     voice_id: Optional[str] = None
+    ref_audio_path: Optional[str] = None
     ref_text: Optional[str] = None
     instruct: Optional[str] = None
     speed: float = 1.0
@@ -93,13 +94,13 @@ class OmniVoiceEngine(TTSEngine):
         from services.model_manager import _gpu_pool, get_model
 
         model = await get_model()
-        ref_audio_path = None
+        ref_audio_path = request.ref_audio_path
         ref_text = request.ref_text
         instruct = request.instruct
         used_seed = request.seed
         voice_id = request.voice_id
 
-        if voice_id and voice_id != "default":
+        if not ref_audio_path and voice_id and voice_id != "default":
             conn = get_db()
             try:
                 row = conn.execute("SELECT * FROM voice_profiles WHERE id=?", (voice_id,)).fetchone()

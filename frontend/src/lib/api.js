@@ -77,3 +77,29 @@ export async function generateTts(payload) {
     audioId: response.headers.get('X-Audio-Id'),
   };
 }
+
+export async function generateVoiceClone(formData) {
+  const response = await fetch(`${API_BASE}/api/ext/generate/clone`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const errorPayload = await response.json();
+      detail = errorPayload.detail || detail;
+    } catch {
+      // The endpoint normally returns JSON errors, but keep a safe fallback.
+    }
+    throw new Error(detail);
+  }
+
+  return {
+    blob: await response.blob(),
+    engine: response.headers.get('X-TTS-Engine') || formData.get('engine'),
+    genTime: response.headers.get('X-Gen-Time'),
+    duration: response.headers.get('X-Audio-Duration'),
+    audioId: response.headers.get('X-Audio-Id'),
+  };
+}
